@@ -1,0 +1,343 @@
+---
+title: "Stats191 Homework 5"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Question 1. 
+Fot this problem, use the HIV resistance data in the penalized regression slides.
+
+```{r}
+X_HIV = read.table('http://stats191.stanford.edu/data/NRTI_X.csv', header=FALSE, sep=',')
+Y_HIV = read.table('http://stats191.stanford.edu/data/NRTI_Y.txt', header=FALSE, sep=',')
+set.seed(0)
+Y_HIV = as.matrix(Y_HIV)[,1]
+X_HIV = as.matrix(X_HIV)
+```
+
+```{r}
+library(glmnet)
+G = glmnet(X_HIV, Y_HIV)
+plot(G)
+nrow(X_HIV)
+length(Y_HIV)
+```
+
+
+1. Randomly split the data in half.
+
+```{r}
+sample <- sample.int(n = nrow(X_HIV), size = floor(0.5*nrow(X_HIV)), replace = F)
+train_X <- X_HIV[sample, ]
+test_X <- X_HIV[-sample, ]
+
+train_Y <- Y_HIV[sample]
+test_Y <- Y_HIV[-sample]
+```
+2. Using the first half of the data, fit the LASSO with cross-validation using cv.glmnet. Extract the coefficients at lambda.min and lambda.1se. Are the estimates sparse or are all coefficients non-zero? (Answer will depend somewhat on the seed you use -- set an integer seed and save it.)
+
+```{r}
+CV = cv.glmnet(train_X, train_Y)
+plot(CV)
+
+CV$lambda.1se
+CV$lambda.min
+```
+
+The estimates for lambda.1se are sparse and most of the coefficients are zero. 
+```{r}
+beta.hat.1se = coef(G, s=CV$lambda.1se)
+beta.hat.1se
+```
+The estimates for lambda.min are less sparse, but most of the coefficients are zero. 
+```{r}
+beta.hat.min = coef(G, s=CV$lambda.min)
+beta.hat.min
+```
+
+3.Using the variables selected on the first half of the data, fit a model using lm on the second half of the data and report confidence intervals for the regression parameters in the model with the selected features. You can find the mutation names identified by position and amino acid here: http://stats191.stanford.edu/data/NRTI_muts.txt. 
+
+We use lambda.min as the optimal lambda.
+```{r}
+beta.hat.min
+subset <- c()
+for (i in 2:nrow(beta.hat.min)) {
+  if (beta.hat.min[i, 1] != 0) {
+    subset <- c(subset, i-1)
+  }
+}
+```
+Fit the test model using lm
+
+```{r}
+fit <- lm(test_Y ~ test_X[, subset])
+summary(fit)
+```
+The confidence intervals for the regression parameters in the model with the selected features: 
+```{r}
+confint(fit)
+```
+
+\newpage
+## Question 2. 
+In this question we will use the same data generating function from Q.5 of Assignment 4, i.e. a noisy version of lpsa of data(prostate) with k=20 junk features. Below we will ask for k=50 junk features as well.
+
+1. Generate noise as in Q.5 of Assignment 4 with 20 junk features. Randomly split the data in half.
+
+```{r}
+set.seed(0)
+prostate = read.table("https://web.stanford.edu/~hastie/ElemStatLearn/datasets/prostate.data", header=TRUE, sep='')
+data(prostate)
+head(prostate)
+```
+
+```{r}
+fun <- function(fit, k){
+  matrix <- model.matrix(fit)
+  n <- nrow(matrix)  
+  for (i in 1:k) {
+    matrix <- cbind(matrix, rnorm(n))
+  }
+  matrix <- matrix[,-1]
+  return(as.data.frame(matrix))
+}
+```
+
+```{r}
+fit <- lm(lpsa ~ ., data = prostate)
+
+new.prostate <- fun(fit, 20)
+fit1 <- lm(lpsa ~ . - train, data = prostate)
+var <- var(fit1$fitted.values)
+noise = function(n) { 
+  return(rnorm(n, mean = 0, sd = sqrt(var/2)))
+}
+
+n <- nrow(new.prostate)
+
+#new.prostate$lpsa <- prostate$lpsa + noise(n)
+lpsa.noisy <- prostate$lpsa + noise(n)
+head(new.prostate)
+```
+Randomly split the data in half: 
+
+```{r}
+sample <- sample.int(n = nrow(new.prostate), size = floor(0.5*nrow(new.prostate)), replace = F)
+
+train.X <- as.matrix(new.prostate[sample, ])
+
+train.lpsa.noisy <- as.matrix(lpsa.noisy[sample])
+
+test.X <- as.matrix(new.prostate[-sample, ])
+test.lpsa.noisy <- as.matrix(lpsa.noisy[-sample])
+
+```
+
+
+2. Using the first half of the data: fit the LASSO with parameter lambda.1se as selected by cv.glmnet, store the coefficients in a vector beta.lasso; do the same but for ridge regression storing the result in beta.ridge.
+
+For Lasso
+```{r}
+cv_junk <- cv.glmnet(train.X, train.lpsa.noisy)
+lambda1 <- cv_junk$lambda.1se 
+
+lasso_best <- glmnet(train.X , train.lpsa.noisy, alpha = 1, lambda = lambda1)
+summary(lasso_best)
+beta.lasso <- coef(lasso_best)
+beta.lasso
+```
+For Ridge regression 
+```{r}
+ridge_best <- glmnet(train.X, train.lpsa.noisy, alpha = 0, lambda= lambda1) 
+beta.ridge <- coef(ridge_best)
+beta.ridge
+```
+
+3. Evaluate how well beta.lasso and beta.ridge predict on the second half of the data using mean squared error. Which one has smaller mean-squared error? (Answer will depend somewhat on the seed you use.)
+
+
+```{r}
+lasso.test = predict(lasso_best, newx = test.X)
+sum((lasso.test - test.lpsa.noisy)^2)
+ridge.test = predict(ridge_best, newx = test.X)
+sum((ridge.test - test.lpsa.noisy)^2)
+```
+
+If we use seed 0, we get 96.53356 for lasso MSE, and  84.87737 for ridge MSE. Therefore the Ridge has the smaller mean-squared sum for k=20 junk features. 
+
+4. Repeat steps 1.-3. using k=50 junk features.
+
+
+4.1. Generate noise as in Q.5 of Assignment 4 with 50 junk features. Randomly split the data in half.
+
+```{r}
+set.seed(0)
+prostate = read.table("https://web.stanford.edu/~hastie/ElemStatLearn/datasets/prostate.data", header=TRUE, sep='')
+data(prostate)
+head(prostate)
+```
+
+```{r}
+fun <- function(fit, k){
+  matrix <- model.matrix(fit)
+  n <- nrow(matrix)  
+  for (i in 1:k) {
+    matrix <- cbind(matrix, rnorm(n))
+  }
+  matrix <- matrix[,-1]
+  return(as.data.frame(matrix))
+}
+```
+
+```{r}
+fit <- lm(lpsa ~ ., data = prostate)
+
+new.prostate <- fun(fit, 50)
+fit1 <- lm(lpsa ~ . - train, data = prostate)
+var <- var(fit1$fitted.values)
+noise = function(n) { 
+  return(rnorm(n, mean = 0, sd = sqrt(var/2)))
+}
+
+n <- nrow(new.prostate)
+
+#new.prostate$lpsa <- prostate$lpsa + noise(n)
+lpsa.noisy <- prostate$lpsa + noise(n)
+head(new.prostate)
+```
+Randomly split the data in half: 
+
+```{r}
+sample <- sample.int(n = nrow(new.prostate), size = floor(0.5*nrow(new.prostate)), replace = F)
+
+train.X <- as.matrix(new.prostate[sample, ])
+
+train.lpsa.noisy <- as.matrix(lpsa.noisy[sample])
+
+test.X <- as.matrix(new.prostate[-sample, ])
+test.lpsa.noisy <- as.matrix(lpsa.noisy[-sample])
+
+```
+
+
+4.2. Using the first half of the data: fit the LASSO with parameter lambda.1se as selected by cv.glmnet, store the coefficients in a vector beta.lasso; do the same but for ridge regression storing the result in beta.ridge.
+
+For Lasso
+```{r}
+cv_junk <- cv.glmnet(train.X, train.lpsa.noisy)
+lambda1 <- cv_junk$lambda.1se 
+
+lasso_best <- glmnet(train.X , train.lpsa.noisy, alpha = 1, lambda = lambda1)
+summary(lasso_best)
+beta.lasso <- coef(lasso_best)
+beta.lasso
+```
+For Ridge regression 
+```{r}
+ridge_best <- glmnet(train.X, train.lpsa.noisy, alpha = 0, lambda= lambda1) 
+beta.ridge <- coef(ridge_best)
+beta.ridge
+```
+
+4.3. Evaluate how well beta.lasso and beta.ridge predict on the second half of the data using mean squared error. Which one has smaller mean-squared error? (Answer will depend somewhat on the seed you use.)
+
+
+```{r}
+lasso.test = predict(lasso_best, newx = test.X)
+sum((lasso.test - test.lpsa.noisy)^2)
+ridge.test = predict(ridge_best, newx = test.X)
+sum((ridge.test - test.lpsa.noisy)^2)
+```
+
+If we use seed 0, we get 55.49604 for lasso MSE, and  79.8315 for ridge MSE. Therefore the Lasso regression has the smaller mean-squared sum for k=50 junk features. 
+
+\newpage
+## Question 3. 
+
+1. Fit a logistic regression, modeling the probability of having any O-ring failures based on the temperature of the launch. Interpret the coefficients in terms of odds ratios.
+```{r}
+orings= read.table('http://stats191.stanford.edu/data/Orings.table', header=TRUE, sep='')
+head(orings)
+
+fit <- glm(Damaged ~ Temp, family = binomial(), data = orings)
+summary(fit)
+exp(coef(fit))
+```
+exponentiating the coefficients will give odd ratios. 
+
+2. From the fitted model, find the probability of an O-ring failure when the temperature at launch was 31 degrees. This was the temperature forecast for the day of the launching of the fatal Challenger flight on January 20, 1986.
+
+```{r}
+logodds = predict(fit, list(Damaged = 1, Temp = 31), type='link')
+logodds
+prob = exp(logodds)/(1+exp(logodds))
+prob
+```
+The probability is 99.96%
+
+3. Find an approximate 95% confidence interval for the coefficient of temperature in the logistic regression using both the summary and confint. Are the confidence intervals the same? Why or why not?
+
+The interval using Confint function 
+```{r}
+confint(fit)[2,]
+```
+
+The interval using R summary
+```{r}
+center = coef(fit)['Temp']
+SE = sqrt(vcov(fit)['Temp', 'Temp'])
+U = center + SE * qnorm(0.975)
+L = center - SE * qnorm(0.975)
+data.frame(L, U)
+```
+The profile intervals are not the same as default intervals because it is calculated using a large sample size. 
+
+\newpage
+## Question 4. 
+Since NETREV is a linear combination of the other covariates PCREV, NSAL, and FEXP, we drop the NETREV column. 
+```{r}
+health <- read.table("http://www1.aucegypt.edu/faculty/hadi/RABE5/Data5/P014.txt", header = TRUE, sep ="")
+head(health)
+health <- health[,1:7]
+head(health)
+```
+1. Using a logistic regression model, test the null hypothesis that the measured covariates have no power to distinguish between rural facilities and than non-rural facilities. Use level  $\alpha$=0.05 
+
+```{r}
+null <- glm(RURAL ~ 1, data= health, family = binomial())
+full <- glm(RURAL ~ BED + MCDAYS + TDAYS + PCREV + NSAL + FEXP, data = health, family = binomial())
+summary(full)
+
+1 - pchisq(67.083 - 48.809, 51 -45)
+```
+
+The P-value for the null hypothesis that the measured covariates have no power to distinguish between rural facilities and than non-rural facilities is 0.005582724 (< $\alpha$ = 0.05). So we reject the null hypothesis.  
+
+2.Use a model selection technique based on AIC to choose a model that seems to best describe the outcome RURAL based on the measured covariates.
+
+```{r}
+library(MASS)
+step(full, direction='both', scope=list(upper= ~., lower = ~ 1), trace =FALSE, k = 2)
+```
+3. Repeat 2. but using BIC instead. Is the model the same?
+
+```{r}
+step(full, direction='both', scope=list(upper= ~., lower = ~ 1), trace =FALSE, k = log(nrow(health)))
+```
+
+The models aren't the same. 
+4. Report estimates of the parameters for the variables in your final model. How are these to be interpreted?
+
+```{r}
+coef(step(full, direction='both', scope=list(upper= ~., lower = ~ 1), trace =FALSE, k = 2))
+```
+
+5. Report confidence intervals for the parameters in 4. Do you think you can trust these intervals?
+
+```{r}
+confint(step(full, direction='both', scope=list(upper= ~., lower = ~ 1), trace =FALSE, k = 2))
+```
+Most of the intervals have upper and lower bounds that are very close to zero, meaning these covariates are almost have no effect on explaining RURAL. 
+
